@@ -84,16 +84,13 @@ async def whatsapp_webhook(request: Request):
             # Handle media if present
             media_urls = []
             if num_media > 0:
+                logger.info(f"[MEDIA] Received {num_media} media attachment(s)")
                 for i in range(num_media):
                     media_url = form_data.get(f"MediaUrl{i}")
                     if media_url:
                         media_urls.append(media_url)
-                        logger.info(f"Media attachment {i}: {media_url}")
-
-            # TODO: Handle media URLs for proof images in the future
-            # For now, we just acknowledge them
-            if media_urls:
-                message_body += f"\n[Received {len(media_urls)} attachment(s)]"
+                        logger.info(f"[MEDIA] Attachment {i}: {media_url}")
+                sys.stdout.flush()
 
             # Get or create conversation session for this user
             logger.info(f"[STEP 1] Getting session for {from_number}")
@@ -102,13 +99,17 @@ async def whatsapp_webhook(request: Request):
             logger.info(f"[STEP 1 DONE] Session retrieved with {len(conversation_history)} messages")
             sys.stdout.flush()
 
-            # Process the message using the chat engine
+            # Process the message using the chat engine with media URLs
             logger.info(f"[STEP 2] Processing message with chat engine")
+            if media_urls:
+                logger.info(f"[STEP 2] Including {len(media_urls)} media URL(s) for proof verification")
             sys.stdout.flush()
+
             response_text, updated_history = process_user_input(
                 message_body,
                 conversation_history,
-                verbose=False  # Don't print debug info for WhatsApp
+                verbose=False,  # Don't print debug info for WhatsApp
+                media_urls=media_urls if media_urls else None
             )
             logger.info(f"[STEP 2 DONE] Chat engine returned response: {response_text[:100]}...")
             sys.stdout.flush()
