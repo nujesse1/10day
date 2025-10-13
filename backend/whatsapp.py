@@ -13,9 +13,18 @@ import logging
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with more verbose output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # Override any existing config
+)
 logger = logging.getLogger(__name__)
+
+# Ensure logs flush immediately
+import sys
+sys.stdout.flush()
+sys.stderr.flush()
 
 # Initialize Twilio client
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -48,15 +57,21 @@ async def whatsapp_webhook(request: Request):
     """
     from_number = None  # Initialize to avoid UnboundLocalError in exception handler
     try:
+        logger.info("[WEBHOOK START] Received webhook request")
+        sys.stdout.flush()
+
         # Parse form data from Twilio
         form_data = await request.form()
+        logger.info("[WEBHOOK] Form data parsed")
+        sys.stdout.flush()
 
         from_number = form_data.get("From")
         to_number = form_data.get("To")
         message_body = form_data.get("Body", "").strip()
         num_media = int(form_data.get("NumMedia", 0))
 
-        logger.info(f"Received WhatsApp message from {from_number}: {message_body}")
+        logger.info(f"[WEBHOOK] Received WhatsApp message from {from_number}: {message_body}")
+        sys.stdout.flush()
 
         # Validate required fields
         if not from_number:
@@ -81,50 +96,83 @@ async def whatsapp_webhook(request: Request):
                 message_body += f"\n[Received {len(media_urls)} attachment(s)]"
 
             # Get or create conversation session for this user
+            logger.info(f"[STEP 1] Getting session for {from_number}")
+            sys.stdout.flush()
             conversation_history = get_or_create_session(from_number)
+            logger.info(f"[STEP 1 DONE] Session retrieved with {len(conversation_history)} messages")
+            sys.stdout.flush()
 
             # Process the message using the chat engine
+            logger.info(f"[STEP 2] Processing message with chat engine")
+            sys.stdout.flush()
             response_text, updated_history = process_user_input(
                 message_body,
                 conversation_history,
                 verbose=False  # Don't print debug info for WhatsApp
             )
+            logger.info(f"[STEP 2 DONE] Chat engine returned response: {response_text[:100]}...")
+            sys.stdout.flush()
 
             # Update the session with new conversation history
+            logger.info(f"[STEP 3] Updating session with new history")
+            sys.stdout.flush()
             update_session(from_number, updated_history)
+            logger.info(f"[STEP 3 DONE] Session updated")
+            sys.stdout.flush()
 
-            logger.info(f"Responding to {from_number}: {response_text}")
+            logger.info(f"[STEP 4] Preparing to respond to {from_number}")
+            sys.stdout.flush()
 
         # Send response back via Twilio
+        logger.info(f"[STEP 5] Sending message via Twilio")
+        sys.stdout.flush()
         if twilio_client:
-            message = twilio_client.messages.create(
-                from_=TWILIO_WHATSAPP_NUMBER,
-                body=response_text,
-                to=from_number
-            )
-            logger.info(f"Message sent with SID: {message.sid}")
+            logger.info(f"[STEP 5a] Twilio client available, creating message")
+            sys.stdout.flush()
+
+            try:
+                message = twilio_client.messages.create(
+                    from_=TWILIO_WHATSAPP_NUMBER,
+                    body=response_text,
+                    to=from_number
+                )
+                logger.info(f"[STEP 5 DONE] Message sent with SID: {message.sid}")
+                sys.stdout.flush()
+            except Exception as twilio_error:
+                logger.error(f"[STEP 5 ERROR] Twilio send failed: {str(twilio_error)}")
+                sys.stdout.flush()
+                raise
         else:
-            logger.error("Cannot send message - Twilio client not initialized")
+            logger.error("[STEP 5 ERROR] Cannot send message - Twilio client not initialized")
+            sys.stdout.flush()
             raise HTTPException(status_code=500, detail="Twilio client not configured")
 
         # Return TwiML response (Twilio expects this)
         return {"status": "success", "message_sid": message.sid}
 
-    except HTTPException:
+    except HTTPException as http_exc:
+        logger.error(f"[ERROR] HTTP Exception: {http_exc.detail}")
+        sys.stdout.flush()
         raise
     except Exception as e:
-        logger.error(f"Error processing WhatsApp webhook: {str(e)}", exc_info=True)
+        logger.error(f"[ERROR] Unexpected error processing WhatsApp webhook: {str(e)}", exc_info=True)
+        sys.stdout.flush()
 
         # Try to send error message to user
         if twilio_client and from_number:
+            logger.info(f"[ERROR RECOVERY] Attempting to send error message to {from_number}")
+            sys.stdout.flush()
             try:
                 twilio_client.messages.create(
                     from_=TWILIO_WHATSAPP_NUMBER,
                     body="❌ Sorry, I encountered an error processing your message. Please try again.",
                     to=from_number
                 )
-            except:
-                pass
+                logger.info(f"[ERROR RECOVERY] Error message sent")
+                sys.stdout.flush()
+            except Exception as recovery_error:
+                logger.error(f"[ERROR RECOVERY] Failed to send error message: {str(recovery_error)}")
+                sys.stdout.flush()
 
         raise HTTPException(status_code=500, detail=str(e))
 
