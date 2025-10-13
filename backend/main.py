@@ -11,7 +11,16 @@ import json
 # Load environment variables
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(title="Drill Sergeant API", version="0.1.0")
+
+# Import and include WhatsApp router
+try:
+    from whatsapp import router as whatsapp_router
+    app.include_router(whatsapp_router)
+except ImportError as e:
+    print(f"Warning: Could not import WhatsApp router: {e}")
+except Exception as e:
+    print(f"Warning: Could not initialize WhatsApp integration: {e}")
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
