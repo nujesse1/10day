@@ -4,20 +4,17 @@ Shared between CLI and WhatsApp interfaces
 """
 import json
 import os
-import requests
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
 from dotenv import load_dotenv
 from prompts import SYSTEM_PROMPT
+import habit_service
 
 # Load environment variables
 load_dotenv()
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Backend API base URL
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # Define tools that the LLM can call
 TOOLS = [
@@ -112,13 +109,11 @@ TOOLS = [
     }
 ]
 
-# Tool implementation functions - these call the backend API
+# Tool implementation functions - these call the habit service directly
 def tool_get_current_habits() -> str:
     """Get list of all current habits"""
     try:
-        response = requests.get(f"{API_BASE}/habits/today")
-        response.raise_for_status()
-        data = response.json()
+        data = habit_service.get_today_habits()
         habits = data.get("habits", [])
         habit_titles = [h["title"] for h in habits]
         return json.dumps({"habits": habit_titles})
@@ -129,9 +124,7 @@ def tool_get_current_habits() -> str:
 def tool_add_habit(title: str) -> str:
     """Add a new habit"""
     try:
-        response = requests.post(f"{API_BASE}/add-habit", json={"title": title})
-        response.raise_for_status()
-        data = response.json()
+        result = habit_service.add_habit(title)
         return json.dumps({"success": True, "message": f"Added habit '{title}'"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
@@ -140,10 +133,8 @@ def tool_add_habit(title: str) -> str:
 def tool_remove_habit(title: str) -> str:
     """Remove a habit"""
     try:
-        response = requests.post(f"{API_BASE}/remove-habit", json={"title": title})
-        response.raise_for_status()
-        data = response.json()
-        return json.dumps({"success": True, "message": data.get("message", f"Removed habit '{title}'")})
+        result = habit_service.remove_habit_by_title(title)
+        return json.dumps({"success": True, "message": result.get("message", f"Removed habit '{title}'")})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
@@ -151,15 +142,9 @@ def tool_remove_habit(title: str) -> str:
 def tool_complete_habit(title: str, proof_path: Optional[str] = None) -> str:
     """Mark a habit as complete"""
     try:
-        payload = {"title": title}
-        if proof_path:
-            payload["proof_path"] = proof_path
+        result = habit_service.complete_habit_by_title(title, proof_path)
 
-        response = requests.post(f"{API_BASE}/complete-habit", json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        msg = f"Completed habit '{data.get('habit', title)}'"
+        msg = f"Completed habit '{result.get('habit', title)}'"
         if proof_path:
             msg += f" with proof: {proof_path}"
         return json.dumps({"success": True, "message": msg})
@@ -170,9 +155,7 @@ def tool_complete_habit(title: str, proof_path: Optional[str] = None) -> str:
 def tool_show_status() -> str:
     """Show today's status"""
     try:
-        response = requests.get(f"{API_BASE}/habits/today")
-        response.raise_for_status()
-        data = response.json()
+        data = habit_service.get_today_habits()
 
         habits = data.get("habits", [])
         date_str = data.get("date", "today")

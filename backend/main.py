@@ -7,6 +7,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 import os
 import json
+import habit_service
 
 # Load environment variables
 load_dotenv()
@@ -100,16 +101,7 @@ async def health_check():
 async def add_habit(request: AddHabitRequest):
     """Add a new habit"""
     try:
-        # Insert habit data
-        result = supabase.table("habits").insert({
-            "title": request.title
-        }).execute()
-
-        return {
-            "status": "success",
-            "message": f"Habit '{request.title}' added successfully",
-            "data": result.data
-        }
+        return habit_service.add_habit(request.title)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -139,28 +131,9 @@ async def remove_habit_by_id(habit_id: int):
 async def remove_habit(request: RemoveHabitRequest):
     """Remove a habit by title (with LLM matching)"""
     try:
-        # Get all habits
-        habits = supabase.table("habits").select("*").execute()
-
-        if not habits.data:
-            raise HTTPException(status_code=404, detail="No habits found")
-
-        # Use LLM to find matching habit
-        matched_habit = find_habit_by_llm(request.title, habits.data)
-
-        if not matched_habit:
-            raise HTTPException(status_code=404, detail=f"No habit matching '{request.title}' found")
-
-        # Delete the habit
-        result = supabase.table("habits").delete().eq("id", matched_habit["id"]).execute()
-
-        return {
-            "status": "success",
-            "message": f"Habit '{matched_habit['title']}' removed successfully",
-            "data": result.data
-        }
-    except HTTPException:
-        raise
+        return habit_service.remove_habit_by_title(request.title)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -264,57 +237,9 @@ async def mark_habit_complete_by_id(habit_id: int, proof_path: Optional[str] = N
 async def complete_habit(request: CompleteHabitRequest):
     """Mark a habit as complete for today by title (with LLM matching)"""
     try:
-        today = date.today()
-
-        # Get all habits
-        habits = supabase.table("habits").select("*").execute()
-
-        if not habits.data:
-            raise HTTPException(status_code=404, detail="No habits found")
-
-        # Use LLM to find matching habit
-        matched_habit = find_habit_by_llm(request.title, habits.data)
-
-        if not matched_habit:
-            raise HTTPException(status_code=404, detail=f"No habit matching '{request.title}' found")
-
-        habit_id = matched_habit["id"]
-
-        # Check if completion entry exists for today
-        existing = supabase.table("habit_completions")\
-            .select("*")\
-            .eq("habit_id", habit_id)\
-            .eq("date", str(today))\
-            .execute()
-
-        if not existing.data:
-            # Auto-generate completion entry
-            supabase.table("habit_completions").insert({
-                "habit_id": habit_id,
-                "date": str(today),
-                "completed": False
-            }).execute()
-
-        # Update the completion
-        update_data = {"completed": True}
-        if request.proof_path:
-            update_data["proof_path"] = request.proof_path
-
-        result = supabase.table("habit_completions")\
-            .update(update_data)\
-            .eq("habit_id", habit_id)\
-            .eq("date", str(today))\
-            .execute()
-
-        return {
-            "status": "success",
-            "habit": matched_habit["title"],
-            "completed": True,
-            "proof": request.proof_path,
-            "data": result.data
-        }
-    except HTTPException:
-        raise
+        return habit_service.complete_habit_by_title(request.title, request.proof_path)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -323,44 +248,7 @@ async def complete_habit(request: CompleteHabitRequest):
 async def get_today_habits():
     """Get all habits with today's completion status"""
     try:
-        today = date.today()
-
-        # Get all habits
-        habits = supabase.table("habits").select("*").execute()
-
-        if not habits.data:
-            return {
-                "status": "success",
-                "date": str(today),
-                "habits": []
-            }
-
-        # Get today's completions
-        completions = supabase.table("habit_completions")\
-            .select("*")\
-            .eq("date", str(today))\
-            .execute()
-
-        # Create a map of habit_id to completion
-        completion_map = {c["habit_id"]: c for c in completions.data}
-
-        # Combine habits with their completion status
-        result = []
-        for habit in habits.data:
-            completion = completion_map.get(habit["id"])
-            result.append({
-                "id": habit["id"],
-                "title": habit["title"],
-                "completed": completion["completed"] if completion else False,
-                "proof_path": completion.get("proof_path") if completion else None,
-                "completion_id": completion["id"] if completion else None
-            })
-
-        return {
-            "status": "success",
-            "date": str(today),
-            "habits": result
-        }
+        return habit_service.get_today_habits()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
