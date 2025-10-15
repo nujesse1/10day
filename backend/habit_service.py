@@ -2,8 +2,8 @@
 Habit Service - Core business logic for habit management
 Shared between FastAPI endpoints and chat engine to avoid HTTP deadlock
 """
-from datetime import date
-from typing import Optional, Dict, Any
+from datetime import date, datetime, time
+from typing import Optional, Dict, Any, List
 from supabase import create_client, Client
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -67,15 +67,36 @@ Match semantically - consider synonyms, abbreviations, and different phrasings."
         return None
 
 
-def add_habit(title: str) -> Dict[str, Any]:
-    """Add a new habit"""
+def add_habit(title: str, start_time: str, deadline_time: str) -> Dict[str, Any]:
+    """
+    Add a new habit with required schedule times
+
+    Args:
+        title: Habit title
+        start_time: Time in HH:MM format (24-hour) when habit should be started
+        deadline_time: Time in HH:MM format (24-hour) when habit must be completed by
+    """
+    # Validate time formats
+    try:
+        datetime.strptime(start_time, "%H:%M")
+    except ValueError:
+        raise ValueError(f"Invalid start_time format: {start_time}. Use HH:MM (24-hour)")
+
+    try:
+        datetime.strptime(deadline_time, "%H:%M")
+    except ValueError:
+        raise ValueError(f"Invalid deadline_time format: {deadline_time}. Use HH:MM (24-hour)")
+
+    # Insert habit with schedule times
     result = supabase.table("habits").insert({
-        "title": title
+        "title": title,
+        "start_time": start_time,
+        "deadline_time": deadline_time
     }).execute()
 
     return {
         "status": "success",
-        "message": f"Habit '{title}' added successfully",
+        "message": f"Habit '{title}' added successfully with start time {start_time} and deadline {deadline_time}",
         "data": result.data
     }
 
@@ -189,7 +210,9 @@ def get_today_habits() -> Dict[str, Any]:
             "title": habit["title"],
             "completed": completion["completed"] if completion else False,
             "proof_path": completion.get("proof_path") if completion else None,
-            "completion_id": completion["id"] if completion else None
+            "completion_id": completion["id"] if completion else None,
+            "start_time": habit.get("start_time"),
+            "deadline_time": habit.get("deadline_time")
         })
 
     return {
@@ -197,3 +220,251 @@ def get_today_habits() -> Dict[str, Any]:
         "date": str(today),
         "habits": result
     }
+
+
+def set_habit_schedule(title: str, start_time: Optional[str] = None, deadline_time: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Set schedule times for a habit
+
+    Args:
+        title: Habit title (will use LLM matching)
+        start_time: Time in HH:MM format (24-hour) or None to clear
+        deadline_time: Time in HH:MM format (24-hour) or None to clear
+    """
+    # Get all habits
+    habits = supabase.table("habits").select("*").execute()
+
+    if not habits.data:
+        raise ValueError("No habits found")
+
+    # Use LLM to find matching habit
+    matched_habit = find_habit_by_llm(title, habits.data)
+
+    if not matched_habit:
+        raise ValueError(f"No habit matching '{title}' found")
+
+    # Validate time formats
+    update_data = {}
+    if start_time is not None:
+        try:
+            # Validate time format
+            datetime.strptime(start_time, "%H:%M")
+            update_data["start_time"] = start_time
+        except ValueError:
+            raise ValueError(f"Invalid start_time format: {start_time}. Use HH:MM (24-hour)")
+
+    if deadline_time is not None:
+        try:
+            # Validate time format
+            datetime.strptime(deadline_time, "%H:%M")
+            update_data["deadline_time"] = deadline_time
+        except ValueError:
+            raise ValueError(f"Invalid deadline_time format: {deadline_time}. Use HH:MM (24-hour)")
+
+    if not update_data:
+        raise ValueError("Must provide at least one time (start_time or deadline_time)")
+
+    # Update the habit
+    result = supabase.table("habits")\
+        .update(update_data)\
+        .eq("id", matched_habit["id"])\
+        .execute()
+
+    return {
+        "status": "success",
+        "message": f"Schedule updated for habit '{matched_habit['title']}'",
+        "habit": matched_habit["title"],
+        "start_time": update_data.get("start_time"),
+        "deadline_time": update_data.get("deadline_time"),
+        "data": result.data
+    }
+
+
+def get_habits_needing_reminders() -> List[Dict[str, Any]]:
+    """
+    Get habits that need reminders sent right now.
+    Returns list of dicts with habit info and reminder_type ('start' or 'deadline')
+
+    Logic:
+    - Current time >= start_time AND habit not complete AND start reminder not sent today
+    - Current time >= deadline_time AND habit not complete AND deadline reminder not sent today
+    """
+    today = date.today()
+    current_time = datetime.now().time()
+
+    # Get all habits with schedules
+    habits = supabase.table("habits").select("*").execute()
+
+    if not habits.data:
+        return []
+
+    # Get today's completions
+    completions = supabase.table("habit_completions")\
+        .select("*")\
+        .eq("date", str(today))\
+        .execute()
+
+    completion_map = {c["habit_id"]: c for c in completions.data}
+
+    # Get today's sent reminders
+    reminders = supabase.table("reminder_log")\
+        .select("*")\
+        .eq("date", str(today))\
+        .execute()
+
+    # Create set of (habit_id, reminder_type) tuples for already sent reminders
+    sent_reminders = {(r["habit_id"], r["reminder_type"]) for r in reminders.data}
+
+    needs_reminder = []
+
+    for habit in habits.data:
+        habit_id = habit["id"]
+
+        # Check if habit is already completed
+        completion = completion_map.get(habit_id)
+        if completion and completion.get("completed"):
+            continue  # Skip completed habits
+
+        # Check start time reminder
+        start_time_str = habit.get("start_time")
+        if start_time_str:
+            start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
+            if current_time >= start_time and (habit_id, "start") not in sent_reminders:
+                needs_reminder.append({
+                    "habit_id": habit_id,
+                    "habit_title": habit["title"],
+                    "reminder_type": "start",
+                    "scheduled_time": start_time_str
+                })
+
+        # Check deadline time reminder
+        deadline_time_str = habit.get("deadline_time")
+        if deadline_time_str:
+            deadline_time = datetime.strptime(deadline_time_str, "%H:%M:%S").time()
+            if current_time >= deadline_time and (habit_id, "deadline") not in sent_reminders:
+                needs_reminder.append({
+                    "habit_id": habit_id,
+                    "habit_title": habit["title"],
+                    "reminder_type": "deadline",
+                    "scheduled_time": deadline_time_str
+                })
+
+    return needs_reminder
+
+
+def mark_reminder_sent(habit_id: int, reminder_type: str) -> Dict[str, Any]:
+    """
+    Mark a reminder as sent in the reminder_log
+
+    Args:
+        habit_id: The habit ID
+        reminder_type: 'start' or 'deadline'
+    """
+    today = date.today()
+
+    result = supabase.table("reminder_log").insert({
+        "habit_id": habit_id,
+        "date": str(today),
+        "reminder_type": reminder_type
+    }).execute()
+
+    return {
+        "status": "success",
+        "data": result.data
+    }
+
+
+def log_strike(habit_id: int, reason: str, notes: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Log a strike for a habit
+
+    Args:
+        habit_id: The habit ID
+        reason: Reason for strike ('missed_deadline', 'no_proof', etc.)
+        notes: Optional additional context
+    """
+    today = date.today()
+
+    result = supabase.table("strikes").insert({
+        "habit_id": habit_id,
+        "date": str(today),
+        "reason": reason,
+        "notes": notes
+    }).execute()
+
+    return {
+        "status": "success",
+        "data": result.data
+    }
+
+
+def get_strike_count(habit_id: Optional[int] = None, days: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Get strike count for a habit or all habits with habit details
+
+    Args:
+        habit_id: Optional habit ID (if None, returns counts for all habits)
+        days: Optional number of days to look back (if None, returns all time)
+
+    Returns:
+        Dict with strike counts and details including habit names
+    """
+    query = supabase.table("strikes").select("*")
+
+    if habit_id is not None:
+        query = query.eq("habit_id", habit_id)
+
+    if days is not None:
+        from datetime import timedelta
+        cutoff_date = date.today() - timedelta(days=days)
+        query = query.gte("date", str(cutoff_date))
+
+    result = query.execute()
+
+    # Get all habits to join with strike data
+    habits = supabase.table("habits").select("*").execute()
+    habit_map = {h["id"]: h for h in habits.data}
+
+    # Group by habit_id and include habit details
+    strikes_by_habit = {}
+    for strike in result.data:
+        hid = strike["habit_id"]
+        if hid not in strikes_by_habit:
+            habit_info = habit_map.get(hid, {})
+            strikes_by_habit[hid] = {
+                "habit_id": hid,
+                "habit_title": habit_info.get("title", f"Unknown (ID: {hid})"),
+                "strikes": [],
+                "strike_count": 0
+            }
+        strikes_by_habit[hid]["strikes"].append(strike)
+        strikes_by_habit[hid]["strike_count"] += 1
+
+    # Convert to list for easier consumption
+    strikes_list = list(strikes_by_habit.values())
+
+    return {
+        "status": "success",
+        "total_strikes": len(result.data),
+        "habits_with_strikes": strikes_list,
+        "all_strikes": result.data
+    }
+
+
+def get_habit_strikes(habit_id: int) -> List[Dict[str, Any]]:
+    """
+    Get all strikes for a specific habit
+
+    Args:
+        habit_id: The habit ID
+
+    Returns:
+        List of strike records
+    """
+    result = supabase.table("strikes")\
+        .select("*")\
+        .eq("habit_id", habit_id)\
+        .order("created_at", desc=True)\
+        .execute()
+
+    return result.data

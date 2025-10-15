@@ -11,6 +11,8 @@ from prompts import SYSTEM_PROMPT
 import habit_service
 from proof_verifier import verify_proof, analyze_image_for_habit
 import logging
+from datetime import datetime
+import pytz
 
 # Load environment variables
 load_dotenv()
@@ -20,116 +22,191 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 logger = logging.getLogger(__name__)
 
-# Define tools that the LLM can call
+# Define tools that the LLM can call (Responses API format)
 TOOLS = [
+    # COMMENTED OUT: Use query_database instead
+    # {
+    #     "type": "function",
+    #     "name": "get_current_habits",
+    #     "description": "Get the list of all current habits from the backend",
+    #     "parameters": {
+    #         "type": "object",
+    #         "properties": {},
+    #         "required": [],
+    #         "additionalProperties": False
+    #     }
+    # },
     {
         "type": "function",
-        "function": {
-            "name": "get_current_habits",
-            "description": "Get the list of all current habits from the backend",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False
-            },
-            "strict": True
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_habit",
-            "description": "Add a new habit to track",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The name/title of the habit to add"
-                    }
+        "name": "add_habit",
+        "description": "Add a new habit to track. MUST include start time (when to begin) and deadline time (when it must be completed by).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The name/title of the habit to add"
                 },
-                "required": ["title"],
-                "additionalProperties": False
-            },
-            "strict": True
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remove_habit",
-            "description": "Remove/delete an existing habit",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The name/title of the habit to remove"
-                    }
+                "start_time": {
+                    "type": "string",
+                    "description": "Time when habit should be started in HH:MM format (24-hour), e.g., '07:00' for 7am"
                 },
-                "required": ["title"],
-                "additionalProperties": False
+                "deadline_time": {
+                    "type": "string",
+                    "description": "Time when habit must be completed by in HH:MM format (24-hour), e.g., '20:00' for 8pm"
+                }
             },
-            "strict": True
+            "required": ["title", "start_time", "deadline_time"],
+            "additionalProperties": False
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "complete_habit",
-            "description": "Mark a habit as completed for today. REQUIRES visual proof - user must provide a screenshot or photo as evidence.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The name/title of the habit to mark complete"
-                    },
-                    "proof_provided": {
-                        "type": "boolean",
-                        "description": "Whether the user provided proof (image/screenshot) with their message"
-                    }
+        "name": "remove_habit",
+        "description": "Remove/delete an existing habit",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The name/title of the habit to remove"
+                }
+            },
+            "required": ["title"],
+            "additionalProperties": False
+        }
+    },
+    {
+        "type": "function",
+        "name": "complete_habit",
+        "description": "Mark a habit as completed for today. REQUIRES visual proof - user must provide a screenshot or photo as evidence.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The name/title of the habit to mark complete"
                 },
-                "required": ["title", "proof_provided"],
-                "additionalProperties": False
+                "proof_provided": {
+                    "type": "boolean",
+                    "description": "Whether the user provided proof (image/screenshot) with their message"
+                }
             },
-            "strict": True
+            "required": ["title", "proof_provided"],
+            "additionalProperties": False
+        }
+    },
+    # COMMENTED OUT: Use query_database instead
+    # {
+    #     "type": "function",
+    #     "name": "show_status",
+    #     "description": "Show today's habit completion status",
+    #     "parameters": {
+    #         "type": "object",
+    #         "properties": {},
+    #         "required": [],
+    #         "additionalProperties": False
+    #     }
+    # },
+    {
+        "type": "function",
+        "name": "complete_habit_from_image",
+        "description": "Intelligently analyze an image, identify which habit it proves, match to existing habits, and mark complete. Use this when user sends an image without specifying which habit.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "user_message": {
+                    "type": "string",
+                    "description": "Any text the user included with the image (e.g., 'done', 'completed', or empty)"
+                }
+            },
+            "required": ["user_message"],
+            "additionalProperties": False
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "show_status",
-            "description": "Show today's habit completion status",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False
-            },
-            "strict": True
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "complete_habit_from_image",
-            "description": "Intelligently analyze an image, identify which habit it proves, match to existing habits, and mark complete. Use this when user sends an image without specifying which habit.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "user_message": {
-                        "type": "string",
-                        "description": "Any text the user included with the image (e.g., 'done', 'completed', or empty)"
-                    }
+        "name": "set_habit_schedule",
+        "description": "Set reminder schedule for a habit. Specify when to send start reminder and/or deadline reminder.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The name/title of the habit to schedule"
                 },
-                "required": ["user_message"],
-                "additionalProperties": False
+                "start_time": {
+                    "type": ["string", "null"],
+                    "description": "Time to send start reminder in HH:MM format (24-hour), e.g., '07:00' for 7am. Set to null to clear."
+                },
+                "deadline_time": {
+                    "type": ["string", "null"],
+                    "description": "Time to send deadline reminder in HH:MM format (24-hour), e.g., '20:00' for 8pm. Set to null to clear."
+                }
             },
-            "strict": True
+            "required": ["title", "start_time", "deadline_time"],
+            "additionalProperties": False
         }
-    }
+    },
+    {
+        "type": "function",
+        "name": "get_current_time",
+        "description": "Get the current date and time with timezone information. Use this to answer questions about the current time or to calculate time remaining for habits.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_strikes",
+        "description": "Get strike count and history. Use this when user asks about strikes, violations, or how many times they've failed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "habit_id": {
+                    "type": ["integer", "null"],
+                    "description": "Optional habit ID to get strikes for specific habit. If null, returns all strikes."
+                },
+                "days": {
+                    "type": ["integer", "null"],
+                    "description": "Optional number of days to look back. If null, returns all time."
+                }
+            },
+            "required": [],
+            "additionalProperties": False
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_database_schema",
+        "description": "PREFERRED TOOL: Get the complete database schema showing all tables, columns, types, and relationships. Use this FIRST when user asks about habits, deadlines, status, or any data. Returns dynamically discovered schema with sample values.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False
+        }
+    },
+    {
+        "type": "function",
+        "name": "query_database",
+        "description": "PREFERRED TOOL: Execute any SELECT query to retrieve data from the database. Use this to get habits, deadlines, completion status, or any other information. Always use get_database_schema first to understand available tables and columns. Example: 'SELECT title, deadline_time FROM habits'",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The SELECT SQL query to execute. Must be a read-only SELECT statement. Can select any columns from any table discovered in the schema."
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": False
+        }
+    },
+    {"type": "web_search"}
 ]
 
 # Tool implementation functions - these call the habit service directly
@@ -144,12 +221,20 @@ def tool_get_current_habits() -> str:
         return json.dumps({"error": str(e)})
 
 
-def tool_add_habit(title: str) -> str:
-    """Add a new habit"""
+def tool_add_habit(title: str, start_time: str, deadline_time: str) -> str:
+    """Add a new habit with required schedule times"""
     try:
-        result = habit_service.add_habit(title)
-        return json.dumps({"success": True, "message": f"Added habit '{title}'"})
+        result = habit_service.add_habit(title, start_time, deadline_time)
+        return json.dumps({
+            "success": True,
+            "message": result.get("message"),
+            "start_time": start_time,
+            "deadline_time": deadline_time
+        })
+    except ValueError as e:
+        return json.dumps({"success": False, "error": str(e)})
     except Exception as e:
+        logger.error(f"Error adding habit: {e}")
         return json.dumps({"success": False, "error": str(e)})
 
 
@@ -234,6 +319,248 @@ def tool_show_status() -> str:
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+def tool_set_habit_schedule(title: str, start_time: Optional[str] = None, deadline_time: Optional[str] = None) -> str:
+    """Set schedule for a habit"""
+    try:
+        result = habit_service.set_habit_schedule(title, start_time, deadline_time)
+        return json.dumps({
+            "success": True,
+            "message": result.get("message"),
+            "habit": result.get("habit"),
+            "start_time": result.get("start_time"),
+            "deadline_time": result.get("deadline_time")
+        })
+    except ValueError as e:
+        return json.dumps({"success": False, "error": str(e)})
+    except Exception as e:
+        logger.error(f"Error setting habit schedule: {e}")
+        return json.dumps({"success": False, "error": str(e)})
+
+
+def tool_get_current_time() -> str:
+    """Get the current date and time"""
+    try:
+        # Get current time in local timezone
+        now = datetime.now()
+
+        # Try to get timezone name
+        try:
+            local_tz = pytz.timezone('America/Los_Angeles')  # Default, can be configured
+            now = datetime.now(local_tz)
+            tz_name = now.strftime('%Z')
+        except:
+            tz_name = "Local"
+
+        return json.dumps({
+            "success": True,
+            "current_time": now.strftime("%H:%M:%S"),
+            "current_date": now.strftime("%Y-%m-%d"),
+            "day_of_week": now.strftime("%A"),
+            "timezone": tz_name,
+            "iso_format": now.isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting current time: {e}")
+        return json.dumps({"success": False, "error": str(e)})
+
+
+def tool_get_database_schema() -> str:
+    """
+    Get the complete database schema including tables, columns, types, and relationships
+    Dynamically discovers schema from the database
+    """
+    try:
+        # Get all table names by trying to query each known table's structure
+        tables = {}
+
+        # Known possible tables - discover what actually exists
+        possible_tables = ['habits', 'habit_completions', 'reminder_log']
+
+        for table_name in possible_tables:
+            try:
+                # Query table with limit 0 to get structure without data
+                result = habit_service.supabase.table(table_name).select("*").limit(1).execute()
+
+                if result.data or result.data == []:
+                    # Table exists - now get one row to see the column structure
+                    sample = habit_service.supabase.table(table_name).select("*").limit(1).execute()
+
+                    if sample.data and len(sample.data) > 0:
+                        row = sample.data[0]
+                        columns = []
+                        for col_name, value in row.items():
+                            # Infer type from Python type
+                            col_type = type(value).__name__ if value is not None else "unknown"
+                            # Map Python types to SQL types
+                            type_mapping = {
+                                'int': 'integer',
+                                'str': 'text',
+                                'bool': 'boolean',
+                                'float': 'numeric',
+                                'dict': 'json',
+                                'list': 'array',
+                                'NoneType': 'unknown'
+                            }
+                            sql_type = type_mapping.get(col_type, col_type)
+
+                            columns.append({
+                                "column": col_name,
+                                "type": sql_type,
+                                "sample_value": value
+                            })
+                    else:
+                        # Empty table - use fallback schema
+                        columns = []
+
+                    tables[table_name] = columns
+
+            except Exception as e:
+                logger.debug(f"Table {table_name} does not exist or is inaccessible: {e}")
+                continue
+
+        # If dynamic discovery failed, return hardcoded fallback
+        if not tables:
+            tables = {
+                "habits": [
+                    {"column": "id", "type": "integer", "description": "Primary key"},
+                    {"column": "title", "type": "text", "description": "Habit name/title"},
+                    {"column": "start_time", "type": "time", "description": "Time to start habit (HH:MM:SS)"},
+                    {"column": "deadline_time", "type": "time", "description": "Time habit must be completed by (HH:MM:SS)"},
+                    {"column": "created_at", "type": "timestamp", "description": "When habit was created"}
+                ],
+                "habit_completions": [
+                    {"column": "id", "type": "integer", "description": "Primary key"},
+                    {"column": "habit_id", "type": "integer", "description": "Foreign key to habits.id"},
+                    {"column": "date", "type": "date", "description": "Date of completion (YYYY-MM-DD)"},
+                    {"column": "completed", "type": "boolean", "description": "Whether habit was completed"},
+                    {"column": "proof_path", "type": "text", "description": "Path/URL to proof image"}
+                ],
+                "reminder_log": [
+                    {"column": "id", "type": "integer", "description": "Primary key"},
+                    {"column": "habit_id", "type": "integer", "description": "Foreign key to habits.id"},
+                    {"column": "date", "type": "date", "description": "Date reminder was sent"},
+                    {"column": "reminder_type", "type": "text", "description": "'start' or 'deadline'"}
+                ]
+            }
+
+        # Document known relationships
+        relationships = [
+            {
+                "from_table": "habit_completions",
+                "from_column": "habit_id",
+                "to_table": "habits",
+                "to_column": "id",
+                "relationship_type": "many-to-one"
+            },
+            {
+                "from_table": "reminder_log",
+                "from_column": "habit_id",
+                "to_table": "habits",
+                "to_column": "id",
+                "relationship_type": "many-to-one"
+            }
+        ]
+
+        return json.dumps({
+            "success": True,
+            "tables": tables,
+            "relationships": relationships,
+            "note": "Schema discovered dynamically from database"
+        })
+
+    except Exception as e:
+        logger.error(f"Error discovering database schema: {e}")
+        # Fallback schema
+        return json.dumps({
+            "success": True,
+            "tables": {
+                "habits": [
+                    {"column": "id", "type": "integer"},
+                    {"column": "title", "type": "text"},
+                    {"column": "start_time", "type": "time"},
+                    {"column": "deadline_time", "type": "time"}
+                ]
+            },
+            "error": str(e)
+        })
+
+
+def tool_query_database(query: str) -> str:
+    """
+    Execute a SELECT query against the database
+    SECURITY: Only allows SELECT statements, blocks all mutations
+    Dynamically routes to appropriate table based on FROM clause
+    """
+    try:
+        # Security: Validate query is read-only
+        query_upper = query.strip().upper()
+
+        # Block any non-SELECT operations
+        dangerous_keywords = [
+            'INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER',
+            'TRUNCATE', 'REPLACE', 'MERGE', 'GRANT', 'REVOKE'
+        ]
+
+        for keyword in dangerous_keywords:
+            if keyword in query_upper:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Query rejected: '{keyword}' operations are not allowed. Only SELECT queries permitted."
+                })
+
+        # Must start with SELECT
+        if not query_upper.startswith('SELECT'):
+            return json.dumps({
+                "success": False,
+                "error": "Query rejected: Only SELECT queries are allowed."
+            })
+
+        logger.info(f"Executing query: {query}")
+
+        # Extract table name from FROM clause dynamically
+        # Match "FROM <table_name>" pattern (case-insensitive)
+        import re
+        from_match = re.search(r'FROM\s+([a-z_]+)', query, re.IGNORECASE)
+
+        if not from_match:
+            return json.dumps({
+                "success": False,
+                "error": "Unable to parse table name from query. Use format: SELECT ... FROM table_name"
+            })
+
+        table_name = from_match.group(1).lower()
+
+        # Try to execute the query on the table
+        # If the table doesn't exist, Supabase will return an error
+
+        # Extract column selection
+        # Match SELECT <columns> FROM pattern
+        select_match = re.search(r'SELECT\s+(.*?)\s+FROM', query, re.IGNORECASE | re.DOTALL)
+
+        if not select_match:
+            columns = "*"
+        else:
+            columns_str = select_match.group(1).strip()
+            # If it's *, use *; otherwise, pass the column list
+            columns = "*" if columns_str == "*" else columns_str
+
+        # Execute query using Supabase query builder
+        result = habit_service.supabase.table(table_name).select(columns).execute()
+
+        return json.dumps({
+            "success": True,
+            "data": result.data,
+            "count": len(result.data) if result.data else 0
+        })
+
+    except Exception as e:
+        logger.error(f"Error executing query: {e}")
+        return json.dumps({
+            "success": False,
+            "error": str(e)
+        })
 
 
 def tool_complete_habit_from_image(user_message: str, proof_source: Optional[str] = None, is_twilio_url: bool = False) -> str:
@@ -343,6 +670,16 @@ def tool_complete_habit_from_image(user_message: str, proof_source: Optional[str
         return json.dumps({"success": False, "error": str(e)})
 
 
+def tool_get_strikes(habit_id: Optional[int] = None, days: Optional[int] = None) -> str:
+    """Get strike count and history"""
+    try:
+        result = habit_service.get_strike_count(habit_id=habit_id, days=days)
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"Error getting strikes: {e}")
+        return json.dumps({"success": False, "error": str(e)})
+
+
 def call_tool(name: str, arguments: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> str:
     """
     Route tool calls to appropriate functions
@@ -372,6 +709,16 @@ def call_tool(name: str, arguments: Dict[str, Any], context: Optional[Dict[str, 
         return tool_complete_habit_from_image(**arguments)
     elif name == "show_status":
         return tool_show_status()
+    elif name == "set_habit_schedule":
+        return tool_set_habit_schedule(**arguments)
+    elif name == "get_current_time":
+        return tool_get_current_time()
+    elif name == "get_strikes":
+        return tool_get_strikes(**arguments)
+    elif name == "get_database_schema":
+        return tool_get_database_schema()
+    elif name == "query_database":
+        return tool_query_database(**arguments)
     else:
         return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -424,18 +771,37 @@ def process_user_input(
             if verbose:
                 print(f"[Round {iteration}] Calling model")
 
-            response = client.chat.completions.create(
+            # Use Responses API
+            # Extract system prompt if it exists in messages
+            system_instructions = None
+            input_messages = messages
+            if messages and messages[0].get("role") == "system":
+                system_instructions = messages[0].get("content")
+                input_messages = messages[1:]  # Skip system message in input
+
+            response = client.responses.create(
                 model="gpt-4o-mini",
-                messages=messages,
+                input=input_messages if input_messages else messages,
+                instructions=system_instructions,
                 tools=TOOLS
             )
 
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
+            # Process output items from Responses API
+            has_function_calls = False
+            final_text_content = None
 
-            # If no tool calls, we have a final text response
-            if not tool_calls:
-                final_content = response_message.content or "I'm not sure how to help with that."
+            for item in response.output:
+                if item.type == "message":
+                    # Extract text content from message
+                    if hasattr(item, 'content') and item.content:
+                        final_text_content = item.content[0].text if hasattr(item.content[0], 'text') else None
+                elif item.type == "function_call":
+                    # Mark that we have function calls
+                    has_function_calls = True
+
+            # If no function calls, we have a final text response
+            if not has_function_calls:
+                final_content = final_text_content or "I'm not sure how to help with that."
                 if verbose:
                     print(f"[Round {iteration}] Model returned final response")
 
@@ -445,34 +811,35 @@ def process_user_input(
 
                 return final_content, conversation_history
 
-            # Model wants to call tools
+            # Model wants to call tools - process function calls
             if verbose:
-                print(f"[Round {iteration}] Model requested {len(tool_calls)} tool call(s)")
+                function_call_count = sum(1 for item in response.output if item.type == "function_call")
+                print(f"[Round {iteration}] Model requested {function_call_count} function call(s)")
 
-            # Add assistant's response to messages
-            messages.append(response_message)
+            # Append all output items to messages (including function calls)
+            for item in response.output:
+                if item.type == "function_call":
+                    # Parse arguments
+                    function_args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
 
-            # Execute all tool calls
-            for tool_call in tool_calls:
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
+                    if verbose:
+                        print(f"  → Calling {item.name}({json.dumps(function_args)})")
 
-                if verbose:
-                    print(f"  → Calling {function_name}({json.dumps(function_args)})")
+                    # Call the tool with context
+                    function_response = call_tool(item.name, function_args, context)
 
-                # Call the tool with context
-                function_response = call_tool(function_name, function_args, context)
+                    if verbose:
+                        print(f"  ← Result: {function_response}")
 
-                if verbose:
-                    print(f"  ← Result: {function_response}")
+                    # Append the function call item to messages
+                    messages.append(item)
 
-                # Add tool response to messages
-                messages.append({
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": function_response
-                })
+                    # Append the function result to messages
+                    messages.append({
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": function_response
+                    })
 
     except Exception as e:
         error_msg = f"❌ Error: {str(e)}"

@@ -23,6 +23,30 @@ except ImportError as e:
 except Exception as e:
     print(f"Warning: Could not initialize WhatsApp integration: {e}")
 
+# Start the scheduler on app startup
+@app.on_event("startup")
+async def startup_event():
+    """Start background scheduler when FastAPI starts"""
+    try:
+        from scheduler import start_scheduler
+        start_scheduler()
+        print("✓ Habit reminder scheduler started")
+    except ImportError as e:
+        print(f"Warning: Could not import scheduler: {e}")
+    except Exception as e:
+        print(f"Warning: Could not start scheduler: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background scheduler when FastAPI shuts down"""
+    try:
+        from scheduler import stop_scheduler
+        stop_scheduler()
+        print("✓ Habit reminder scheduler stopped")
+    except Exception as e:
+        print(f"Warning: Error stopping scheduler: {e}")
+
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
@@ -35,6 +59,8 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Request models
 class AddHabitRequest(BaseModel):
     title: str
+    start_time: str
+    deadline_time: str
 
 
 class RemoveHabitRequest(BaseModel):
@@ -44,6 +70,12 @@ class RemoveHabitRequest(BaseModel):
 class CompleteHabitRequest(BaseModel):
     title: str
     proof_path: Optional[str] = None
+
+
+class SetScheduleRequest(BaseModel):
+    title: str
+    start_time: Optional[str] = None
+    deadline_time: Optional[str] = None
 
 
 # Helper function: LLM-based habit matching
@@ -99,9 +131,11 @@ async def health_check():
 
 @app.post("/add-habit")
 async def add_habit(request: AddHabitRequest):
-    """Add a new habit"""
+    """Add a new habit with required schedule times"""
     try:
-        return habit_service.add_habit(request.title)
+        return habit_service.add_habit(request.title, request.start_time, request.deadline_time)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -305,5 +339,20 @@ async def get_daily_summary():
             "completed_habits": completed_habits,
             "missed_habits": missed_habits
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/habits/schedule")
+async def set_habit_schedule(request: SetScheduleRequest):
+    """Set reminder schedule for a habit"""
+    try:
+        return habit_service.set_habit_schedule(
+            request.title,
+            request.start_time,
+            request.deadline_time
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
