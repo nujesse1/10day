@@ -192,7 +192,7 @@ def check_missed_deadlines():
             logger.info(f"[SCHEDULER] Logging strike for missed deadline: {habit_title}")
 
             try:
-                habit_service.log_strike(
+                strike_result = habit_service.log_strike(
                     habit_id=habit_id,
                     reason="missed_deadline",
                     notes=f"Deadline {deadline_time_str} missed on {today}"
@@ -200,8 +200,22 @@ def check_missed_deadlines():
                 strikes_logged += 1
                 logger.info(f"[SCHEDULER] Strike logged for habit_id={habit_id} ({habit_title})")
 
-                # Optionally send a strike notification
-                message = f"❌ STRIKE: {habit_title}\n\nYou missed the deadline. Strike logged."
+                # Send strike notification with punishment info
+                strike_count = strike_result.get("strike_count", 0)
+                punishment_info = strike_result.get("punishment", {})
+
+                if punishment_info.get("status") == "success":
+                    # Punishment was assigned
+                    punishment_title = punishment_info.get("punishment", "Unknown")
+                    message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. Strike logged.\n\n⚡ PUNISHMENT ASSIGNED: {punishment_title}\n\nComplete it by 11:59 PM or face the consequences."
+                elif punishment_info.get("status") == "placeholder":
+                    # Placeholder strike (2-4)
+                    placeholder_msg = punishment_info.get("message", "Punishment not yet implemented")
+                    message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. {placeholder_msg}"
+                else:
+                    # Fallback
+                    message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. Strike logged."
+
                 send_whatsapp_message(message)
 
             except Exception as e:
@@ -214,6 +228,56 @@ def check_missed_deadlines():
 
     except Exception as e:
         logger.error(f"[SCHEDULER] Error in check_missed_deadlines: {e}", exc_info=True)
+
+
+def cleanup_punishment_habits():
+    """
+    Delete punishment habits that have expired (auto_delete_at <= today)
+    Called once daily at 11:59 PM, but also catches up on missed cleanups
+    if server was down
+    """
+    try:
+        from datetime import date
+
+        logger.info("[SCHEDULER] Cleaning up expired punishment habits...")
+
+        today = date.today()
+
+        # Find all habits where auto_delete_at <= today (includes past dates)
+        # This ensures we clean up even if server was down
+        expired_habits = habit_service.supabase.table("habits")\
+            .select("*")\
+            .eq("punishment_habit", True)\
+            .lte("auto_delete_at", str(today))\
+            .execute()
+
+        if not expired_habits.data:
+            logger.info("[SCHEDULER] No expired punishment habits to clean up")
+            return
+
+        logger.info(f"[SCHEDULER] Found {len(expired_habits.data)} expired punishment habit(s)")
+
+        # Delete each expired habit
+        for habit in expired_habits.data:
+            habit_id = habit["id"]
+            habit_title = habit["title"]
+            auto_delete_at = habit.get("auto_delete_at")
+
+            try:
+                habit_service.supabase.table("habits")\
+                    .delete()\
+                    .eq("id", habit_id)\
+                    .execute()
+
+                logger.info(f"[SCHEDULER] Deleted punishment habit: {habit_title} (ID: {habit_id}, expired: {auto_delete_at})")
+
+            except Exception as e:
+                logger.error(f"[SCHEDULER] Failed to delete habit {habit_id}: {e}")
+
+        logger.info("[SCHEDULER] Punishment habit cleanup completed")
+
+    except Exception as e:
+        logger.error(f"[SCHEDULER] Error in cleanup_punishment_habits: {e}", exc_info=True)
 
 
 def check_all():
@@ -247,8 +311,18 @@ def start_scheduler():
         replace_existing=True
     )
 
+    # Run punishment cleanup daily at 11:59 PM
+    from apscheduler.triggers.cron import CronTrigger
+    scheduler.add_job(
+        func=cleanup_punishment_habits,
+        trigger=CronTrigger(hour=23, minute=59),
+        id='punishment_cleanup',
+        name='Cleanup expired punishment habits',
+        replace_existing=True
+    )
+
     scheduler.start()
-    logger.info("Scheduler started - checking every 10 seconds")
+    logger.info("Scheduler started - checking every 10 seconds, cleanup at 11:59 PM")
 
 
 def stop_scheduler():

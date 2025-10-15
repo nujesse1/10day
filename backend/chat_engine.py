@@ -210,17 +210,6 @@ TOOLS = [
 ]
 
 # Tool implementation functions - these call the habit service directly
-def tool_get_current_habits() -> str:
-    """Get list of all current habits"""
-    try:
-        data = habit_service.get_today_habits()
-        habits = data.get("habits", [])
-        habit_titles = [h["title"] for h in habits]
-        return json.dumps({"habits": habit_titles})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
 def tool_add_habit(title: str, start_time: str, deadline_time: str) -> str:
     """Add a new habit with required schedule times"""
     try:
@@ -298,27 +287,6 @@ def tool_complete_habit(title: str, proof_provided: bool, proof_source: Optional
     except Exception as e:
         logger.error(f"Error completing habit with proof: {e}")
         return json.dumps({"success": False, "error": str(e)})
-
-
-def tool_show_status() -> str:
-    """Show today's status"""
-    try:
-        data = habit_service.get_today_habits()
-
-        habits = data.get("habits", [])
-        date_str = data.get("date", "today")
-
-        completed_count = sum(1 for h in habits if h["completed"])
-        total = len(habits)
-
-        return json.dumps({
-            "date": date_str,
-            "habits": habits,
-            "completed": completed_count,
-            "total": total
-        })
-    except Exception as e:
-        return json.dumps({"error": str(e)})
 
 
 def tool_set_habit_schedule(title: str, start_time: Optional[str] = None, deadline_time: Optional[str] = None) -> str:
@@ -689,9 +657,7 @@ def call_tool(name: str, arguments: Dict[str, Any], context: Optional[Dict[str, 
         arguments: Tool arguments from LLM
         context: Additional context (e.g., media URLs from WhatsApp)
     """
-    if name == "get_current_habits":
-        return tool_get_current_habits()
-    elif name == "add_habit":
+    if name == "add_habit":
         return tool_add_habit(**arguments)
     elif name == "remove_habit":
         return tool_remove_habit(**arguments)
@@ -707,8 +673,6 @@ def call_tool(name: str, arguments: Dict[str, Any], context: Optional[Dict[str, 
             arguments["proof_source"] = context["proof_source"]
             arguments["is_twilio_url"] = context.get("is_twilio_url", False)
         return tool_complete_habit_from_image(**arguments)
-    elif name == "show_status":
-        return tool_show_status()
     elif name == "set_habit_schedule":
         return tool_set_habit_schedule(**arguments)
     elif name == "get_current_time":

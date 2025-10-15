@@ -376,7 +376,7 @@ def mark_reminder_sent(habit_id: int, reminder_type: str) -> Dict[str, Any]:
 
 def log_strike(habit_id: int, reason: str, notes: Optional[str] = None) -> Dict[str, Any]:
     """
-    Log a strike for a habit
+    Log a strike for a habit and automatically assign punishment
 
     Args:
         habit_id: The habit ID
@@ -385,6 +385,7 @@ def log_strike(habit_id: int, reason: str, notes: Optional[str] = None) -> Dict[
     """
     today = date.today()
 
+    # Log the strike
     result = supabase.table("strikes").insert({
         "habit_id": habit_id,
         "date": str(today),
@@ -392,9 +393,17 @@ def log_strike(habit_id: int, reason: str, notes: Optional[str] = None) -> Dict[
         "notes": notes
     }).execute()
 
+    # Get today's total strike count
+    strike_count = get_today_strike_count()
+
+    # Automatically assign punishment based on strike count
+    punishment_result = assign_punishment(strike_count)
+
     return {
         "status": "success",
-        "data": result.data
+        "data": result.data,
+        "strike_count": strike_count,
+        "punishment": punishment_result
     }
 
 
@@ -468,3 +477,78 @@ def get_habit_strikes(habit_id: int) -> List[Dict[str, Any]]:
         .execute()
 
     return result.data
+
+
+def get_today_strike_count() -> int:
+    """
+    Get the total number of strikes logged today (across all habits)
+
+    Returns:
+        Total strike count for today
+    """
+    today = date.today()
+
+    result = supabase.table("strikes")\
+        .select("*", count="exact")\
+        .eq("date", str(today))\
+        .execute()
+
+    return result.count if result.count else 0
+
+
+def assign_punishment(strike_count: int) -> Dict[str, Any]:
+    """
+    Assign a punishment habit based on today's total strike count
+
+    Args:
+        strike_count: Number of strikes accumulated today
+
+    Returns:
+        Dict with punishment details
+    """
+    today = date.today()
+    current_time = datetime.now().time()
+
+    # Hard-coded punishment escalation rules
+    if strike_count == 1:
+        punishment_title = "PUNISHMENT: 5K Run"
+        start_time = current_time.strftime("%H:%M")
+        deadline_time = "23:59"  # End of day
+    elif strike_count == 2:
+        # Placeholder - just notify
+        return {
+            "status": "placeholder",
+            "message": f"Strike {strike_count} logged. Punishment not yet implemented.",
+            "strike_count": strike_count
+        }
+    elif strike_count == 3:
+        # Placeholder - just notify
+        return {
+            "status": "placeholder",
+            "message": f"Strike {strike_count} logged. Punishment not yet implemented.",
+            "strike_count": strike_count
+        }
+    else:  # strike_count >= 4
+        # Placeholder - just notify
+        return {
+            "status": "placeholder",
+            "message": f"Strike {strike_count} logged. Punishment not yet implemented.",
+            "strike_count": strike_count
+        }
+
+    # Create the punishment habit
+    result = supabase.table("habits").insert({
+        "title": punishment_title,
+        "start_time": start_time,
+        "deadline_time": deadline_time,
+        "punishment_habit": True,
+        "auto_delete_at": str(today)
+    }).execute()
+
+    return {
+        "status": "success",
+        "message": f"Punishment assigned: {punishment_title}",
+        "strike_count": strike_count,
+        "punishment": punishment_title,
+        "data": result.data
+    }
