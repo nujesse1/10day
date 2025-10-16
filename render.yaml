@@ -4,9 +4,8 @@ services:
     env: python
     region: oregon
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r ../requirements.txt
-    startCommand: python -c "import sys; sys.path.insert(0, '.'); import main" && uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('Import successful')" && cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
