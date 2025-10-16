@@ -205,11 +205,21 @@ def check_missed_deadlines():
                 punishment_info = strike_result.get("punishment", {})
 
                 if punishment_info.get("status") == "success":
-                    # Punishment was assigned
+                    # Punishment habit assigned (Strike 1)
                     punishment_title = punishment_info.get("punishment", "Unknown")
                     message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. Strike logged.\n\n⚡ PUNISHMENT ASSIGNED: {punishment_title}\n\nComplete it by 11:59 PM or face the consequences."
+                elif punishment_info.get("status") == "crypto_success":
+                    # Crypto punishment executed (Strike 2)
+                    amount = punishment_info.get("amount_usd", 10)
+                    tx_hash = punishment_info.get("tx_hash", "Unknown")
+                    basescan_link = punishment_info.get("basescan_link", "")
+                    message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. Strike logged.\n\n💸 CRYPTO PUNISHMENT EXECUTED 💸\n\n${amount} USDC has been sent from your wallet.\n\nTransaction: {tx_hash[:16]}...\n\nView on BaseScan:\n{basescan_link}\n\nTHE MONEY IS GONE. NO TAKE-BACKS.\n\n(Testing mode: $1 only)"
+                elif punishment_info.get("status") == "crypto_error":
+                    # Crypto punishment failed (Strike 2)
+                    error_msg = punishment_info.get("error", "Unknown error")
+                    message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. Strike logged.\n\n⚠️ CRYPTO PUNISHMENT FAILED ⚠️\n\nAttempted to send $10 USDC but failed:\n{error_msg}\n\nFix your wallet setup immediately."
                 elif punishment_info.get("status") == "placeholder":
-                    # Placeholder strike (2-4)
+                    # Placeholder strike (3-4)
                     placeholder_msg = punishment_info.get("message", "Punishment not yet implemented")
                     message = f"❌ STRIKE {strike_count}: {habit_title}\n\nYou missed the deadline. {placeholder_msg}"
                 else:

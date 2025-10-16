@@ -9,9 +9,23 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import json
+import logging
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Import crypto punishment module
+try:
+    from crypto_punishment import send_usdc_punishment
+    CRYPTO_ENABLED = True
+    logger.info("Crypto punishment module loaded successfully")
+except ImportError as e:
+    logger.warning(f"Crypto punishment module not available: {e}")
+    CRYPTO_ENABLED = False
 
 # Initialize Supabase client
 supabase_url = os.getenv("SUPABASE_URL")
@@ -515,12 +529,39 @@ def assign_punishment(strike_count: int) -> Dict[str, Any]:
         start_time = current_time.strftime("%H:%M")
         deadline_time = "23:59"  # End of day
     elif strike_count == 2:
-        # Placeholder - just notify
-        return {
-            "status": "placeholder",
-            "message": f"Strike {strike_count} logged. Punishment not yet implemented.",
-            "strike_count": strike_count
-        }
+        # CRYPTO PUNISHMENT: Send $10 USDC on Base
+        logger.info(f"[PUNISHMENT] Strike 2 triggered - executing crypto punishment")
+
+        if not CRYPTO_ENABLED:
+            logger.error("[PUNISHMENT] Crypto module not available!")
+            return {
+                "status": "error",
+                "message": "Strike 2: Crypto punishment not available (module not loaded)",
+                "strike_count": strike_count
+            }
+
+        # Execute the crypto transfer
+        crypto_result = send_usdc_punishment(amount_usd=1.0)  # $1 for testing
+
+        if crypto_result.get("success"):
+            logger.info(f"[PUNISHMENT] Crypto punishment successful: {crypto_result.get('tx_hash')}")
+            return {
+                "status": "crypto_success",
+                "message": f"Strike {strike_count}: $10 USDC sent to punishment address",
+                "strike_count": strike_count,
+                "amount_usd": 10.0,
+                "tx_hash": crypto_result.get("tx_hash"),
+                "basescan_link": crypto_result.get("basescan_link"),
+                "crypto_details": crypto_result
+            }
+        else:
+            logger.error(f"[PUNISHMENT] Crypto punishment failed: {crypto_result.get('error')}")
+            return {
+                "status": "crypto_error",
+                "message": f"Strike {strike_count}: Failed to send USDC - {crypto_result.get('error')}",
+                "strike_count": strike_count,
+                "error": crypto_result.get("error")
+            }
     elif strike_count == 3:
         # Placeholder - just notify
         return {
