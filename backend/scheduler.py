@@ -129,11 +129,15 @@ def check_missed_deadlines():
     """
     try:
         from datetime import datetime
+        import pytz
 
         logger.info("[SCHEDULER] Checking for missed deadlines...")
 
-        today = date.today()
-        current_time = datetime.now().time()
+        # Use Pacific timezone for all time comparisons
+        pacific_tz = pytz.timezone('America/Los_Angeles')
+        now_pacific = datetime.now(pacific_tz)
+        today = now_pacific.date()
+        current_time = now_pacific.time()
 
         # Get today's habits
         habits_data = habit_service.get_today_habits()

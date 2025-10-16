@@ -303,8 +303,13 @@ def get_habits_needing_reminders() -> List[Dict[str, Any]]:
     - Current time >= start_time AND habit not complete AND start reminder not sent today
     - Current time >= deadline_time AND habit not complete AND deadline reminder not sent today
     """
-    today = date.today()
-    current_time = datetime.now().time()
+    import pytz
+
+    # Use Pacific timezone for all time comparisons
+    pacific_tz = pytz.timezone('America/Los_Angeles')
+    now_pacific = datetime.now(pacific_tz)
+    today = now_pacific.date()
+    current_time = now_pacific.time()
 
     # Get all habits with schedules
     habits = supabase.table("habits").select("*").execute()
@@ -520,8 +525,13 @@ def assign_punishment(strike_count: int) -> Dict[str, Any]:
     Returns:
         Dict with punishment details
     """
-    today = date.today()
-    current_time = datetime.now().time()
+    import pytz
+
+    # Use Pacific timezone for all time operations
+    pacific_tz = pytz.timezone('America/Los_Angeles')
+    now_pacific = datetime.now(pacific_tz)
+    today = now_pacific.date()
+    current_time = now_pacific.time()
 
     # Hard-coded punishment escalation rules
     if strike_count == 1:

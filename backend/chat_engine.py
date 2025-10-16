@@ -310,16 +310,10 @@ def tool_set_habit_schedule(title: str, start_time: Optional[str] = None, deadli
 def tool_get_current_time() -> str:
     """Get the current date and time"""
     try:
-        # Get current time in local timezone
-        now = datetime.now()
-
-        # Try to get timezone name
-        try:
-            local_tz = pytz.timezone('America/Los_Angeles')  # Default, can be configured
-            now = datetime.now(local_tz)
-            tz_name = now.strftime('%Z')
-        except:
-            tz_name = "Local"
+        # Always use Pacific timezone
+        local_tz = pytz.timezone('America/Los_Angeles')
+        now = datetime.now(local_tz)
+        tz_name = now.strftime('%Z')
 
         return json.dumps({
             "success": True,
