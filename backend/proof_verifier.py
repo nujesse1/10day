@@ -5,7 +5,7 @@ Uses GPT-4 Vision to verify that submitted proof images are legitimate
 import os
 import base64
 import requests
-from typing import Optional, Union
+from typing import Optional
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv

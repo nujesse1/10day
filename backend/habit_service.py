@@ -2,7 +2,7 @@
 Habit Service - Core business logic for habit management
 Shared between FastAPI endpoints and chat engine to avoid HTTP deadlock
 """
-from datetime import date, datetime, time
+from datetime import date, datetime
 from typing import Optional, Dict, Any, List
 from supabase import create_client, Client
 from openai import OpenAI

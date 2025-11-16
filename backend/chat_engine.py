@@ -7,7 +7,7 @@ import os
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
 from dotenv import load_dotenv
-from prompts import SYSTEM_PROMPT, RESEARCH_PROMPT, format_baseline_context
+from prompts import SYSTEM_PROMPT, format_baseline_context
 import habit_service
 from proof_verifier import verify_proof, analyze_image_for_habit
 import logging
@@ -24,18 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Define tools that the LLM can call (Responses API format)
 TOOLS = [
-    # COMMENTED OUT: Use query_database instead
-    # {
-    #     "type": "function",
-    #     "name": "get_current_habits",
-    #     "description": "Get the list of all current habits from the backend",
-    #     "parameters": {
-    #         "type": "object",
-    #         "properties": {},
-    #         "required": [],
-    #         "additionalProperties": False
-    #     }
-    # },
     {
         "type": "function",
         "name": "add_habit",
@@ -96,18 +84,6 @@ TOOLS = [
             "additionalProperties": False
         }
     },
-    # COMMENTED OUT: Use query_database instead
-    # {
-    #     "type": "function",
-    #     "name": "show_status",
-    #     "description": "Show today's habit completion status",
-    #     "parameters": {
-    #         "type": "object",
-    #         "properties": {},
-    #         "required": [],
-    #         "additionalProperties": False
-    #     }
-    # },
     {
         "type": "function",
         "name": "complete_habit_from_image",

@@ -3,10 +3,8 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from datetime import date
 from typing import Optional
-from openai import OpenAI
 from pydantic import BaseModel
 import os
-import json
 import habit_service
 
 # Load environment variables
@@ -51,9 +49,6 @@ async def shutdown_event():
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
-
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 # Request models

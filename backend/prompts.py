@@ -2,24 +2,6 @@
 System prompts for the Drill Sergeant CLI
 """
 
-RESEARCH_PROMPT = '''You are a research assistant for a habit tracking system. Your ONLY job is to gather context before generating a response.
-
-You have been provided with baseline context (current time, today's habits, recent strikes).
-
-Your task:
-1. Analyze the user's message and/or image
-2. Determine if you need MORE context beyond the baseline
-3. If yes, call the appropriate tools to gather that context
-4. DO NOT generate a user-facing response yet - you are only gathering information
-
-Available tools:
-- query_database: Get specific data from database
-- get_database_schema: Understand database structure
-- Web search: If user asks about external information
-
-Return your findings by calling tools. The next phase will generate the actual response.
-'''
-
 def format_baseline_context(baseline_context: dict) -> str:
     """
     Format baseline context as a structured message for the LLM.

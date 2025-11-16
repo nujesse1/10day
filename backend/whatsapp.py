@@ -4,7 +4,6 @@ WhatsApp Integration - Twilio webhook handler for WhatsApp messages
 import os
 from fastapi import APIRouter, Request, HTTPException
 from twilio.rest import Client
-from twilio.twiml.messaging_response import MessagingResponse
 from dotenv import load_dotenv
 from chat_engine import process_user_input
 from session_store import get_or_create_session, update_session
