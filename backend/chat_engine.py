@@ -7,7 +7,7 @@ import os
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
 from dotenv import load_dotenv
-from prompts import SYSTEM_PROMPT
+from prompts import SYSTEM_PROMPT, RESEARCH_PROMPT, format_baseline_context
 import habit_service
 from proof_verifier import verify_proof, analyze_image_for_habit
 import logging
@@ -256,11 +256,20 @@ def tool_complete_habit(title: str, proof_provided: bool, proof_source: Optional
 
         logger.info(f"Verifying proof for habit: {title}")
 
-        # Verify the proof using GPT-4 Vision
+        # Get habit details to fetch deadline_time
+        habits_data = habit_service.get_today_habits()
+        existing_habits = habits_data.get("habits", [])
+
+        # Find the matching habit to get deadline
+        matched_habit = habit_service.find_habit_by_llm(title, existing_habits)
+        deadline_time = matched_habit.get("deadline_time") if matched_habit else None
+
+        # Verify the proof using GPT-4 Vision with deadline checking
         verification = verify_proof(
             image_source=proof_source,
             habit_title=title,
-            is_twilio_url=is_twilio_url
+            is_twilio_url=is_twilio_url,
+            deadline_time=deadline_time
         )
 
         # Check verification result
@@ -528,8 +537,8 @@ def tool_query_database(query: str) -> str:
 def tool_complete_habit_from_image(user_message: str, proof_source: Optional[str] = None, is_twilio_url: bool = False) -> str:
     """
     Smart image-based habit completion:
-    1. Analyze image to identify what habit it proves
-    2. Match to existing habits using LLM
+    1. Get existing habits from database
+    2. Analyze image AND message together to match to a habit
     3. Verify proof is legitimate
     4. Mark complete if all checks pass
 
@@ -549,19 +558,8 @@ def tool_complete_habit_from_image(user_message: str, proof_source: Optional[str
         logger.info(f"[SMART COMPLETION] Starting smart image-based completion")
         logger.info(f"[SMART COMPLETION] User message: {user_message}")
 
-        # Step 2: Analyze the image to identify what habit it represents
-        logger.info(f"[SMART COMPLETION] Step 1: Analyzing image to identify habit...")
-        analysis = analyze_image_for_habit(
-            image_source=proof_source,
-            is_twilio_url=is_twilio_url
-        )
-
-        logger.info(f"[SMART COMPLETION] Identified: {analysis.habit_identified}")
-        logger.info(f"[SMART COMPLETION] Activity type: {analysis.activity_type}")
-        logger.info(f"[SMART COMPLETION] Details: {analysis.key_details}")
-
-        # Step 3: Get existing habits and match using LLM
-        logger.info(f"[SMART COMPLETION] Step 2: Matching to existing habits...")
+        # Step 2: Get existing habits from database
+        logger.info(f"[SMART COMPLETION] Step 1: Getting existing habits...")
         habits_data = habit_service.get_today_habits()
         existing_habits = habits_data.get("habits", [])
 
@@ -571,29 +569,43 @@ def tool_complete_habit_from_image(user_message: str, proof_source: Optional[str
                 "error": "No habits found to match against. Add some habits first."
             })
 
-        # Use LLM to find best matching habit
-        matched_habit = habit_service.find_habit_by_llm(
-            analysis.habit_identified,
-            existing_habits
+        # Step 3: Analyze the image AND message to identify which habit is being completed
+        logger.info(f"[SMART COMPLETION] Step 2: Analyzing image and message to match habit...")
+        analysis = analyze_image_for_habit(
+            image_source=proof_source,
+            user_message=user_message,
+            available_habits=existing_habits,
+            is_twilio_url=is_twilio_url
         )
+
+        logger.info(f"[SMART COMPLETION] Matched habit: {analysis.matched_habit_title}")
+        logger.info(f"[SMART COMPLETION] Identified: {analysis.habit_identified}")
+        logger.info(f"[SMART COMPLETION] Activity type: {analysis.activity_type}")
+        logger.info(f"[SMART COMPLETION] Details: {analysis.key_details}")
+
+        # Find the matched habit in our existing habits list
+        matched_habit = next((h for h in existing_habits if h['title'] == analysis.matched_habit_title), None)
 
         if not matched_habit:
             return json.dumps({
                 "success": False,
-                "error": f"Could not match '{analysis.habit_identified}' to any existing habit. Available habits: {', '.join([h['title'] for h in existing_habits])}",
+                "error": f"Could not find habit '{analysis.matched_habit_title}' in available habits. Available habits: {', '.join([h['title'] for h in existing_habits])}",
                 "identified_habit": analysis.habit_identified,
                 "confidence": analysis.confidence
             })
 
-        logger.info(f"[SMART COMPLETION] Matched to habit: {matched_habit['title']}")
-
         # Step 4: Verify the proof is legitimate for this habit
         logger.info(f"[SMART COMPLETION] Step 3: Verifying proof legitimacy...")
+
+        # Get deadline_time from matched habit for timestamp checking
+        deadline_time = matched_habit.get('deadline_time')
+
         verification = verify_proof(
             image_source=proof_source,
             habit_title=matched_habit['title'],
             is_twilio_url=is_twilio_url,
-            additional_context=f"Image shows: {analysis.key_details}"
+            additional_context=f"User said: '{user_message}'. Image shows: {analysis.key_details}",
+            deadline_time=deadline_time
         )
 
         if not verification.verified:
@@ -640,6 +652,41 @@ def tool_get_strikes(habit_id: Optional[int] = None, days: Optional[int] = None)
     except Exception as e:
         logger.error(f"Error getting strikes: {e}")
         return json.dumps({"success": False, "error": str(e)})
+
+
+def gather_baseline_context() -> Dict[str, Any]:
+    """
+    Automatically gather baseline context before any LLM interaction.
+    This ensures the LLM always has fresh, accurate data to work with.
+
+    Returns:
+        Dict with current_time, habits, and strikes
+    """
+    try:
+        # Get current time
+        time_result = tool_get_current_time()
+        time_data = json.loads(time_result)
+
+        # Get today's habits with completion status
+        habits_data = habit_service.get_today_habits()
+
+        # Get recent strikes (last 7 days)
+        strikes_result = tool_get_strikes(habit_id=None, days=7)
+        strikes_data = json.loads(strikes_result)
+
+        return {
+            "current_time": time_data,
+            "habits": habits_data.get("habits", []),
+            "strikes": strikes_data
+        }
+    except Exception as e:
+        logger.error(f"Error gathering baseline context: {e}")
+        return {
+            "current_time": {},
+            "habits": [],
+            "strikes": {},
+            "error": str(e)
+        }
 
 
 def call_tool(name: str, arguments: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> str:
@@ -721,7 +768,20 @@ def process_user_input(
     messages.append(user_message)
 
     try:
-        # Loop to handle multiple rounds of tool calling
+        # PHASE 1: RESEARCH - Gather baseline context before any response
+        logger.info("[PHASE 1] Gathering baseline context...")
+        baseline_context = gather_baseline_context()
+
+        # Format baseline context using prompts module
+        context_summary = format_baseline_context(baseline_context)
+
+        logger.info(f"[PHASE 1] Context gathered: {len(baseline_context['habits'])} habits, {baseline_context['strikes'].get('strike_count', 0)} strikes")
+
+        # Add context as a system message before user message (so LLM sees it)
+        messages.insert(-1, {"role": "system", "content": context_summary})
+
+        # Loop to handle multiple rounds of tool calling (PHASE 2: RESPONSE)
+        logger.info("[PHASE 2] Beginning response generation...")
         iteration = 0
 
         while True:

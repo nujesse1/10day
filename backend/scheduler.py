@@ -319,7 +319,7 @@ def start_scheduler():
     # Run both checks every 60 seconds (optimized for free tier resources)
     scheduler.add_job(
         func=check_all,
-        trigger=IntervalTrigger(seconds=60),
+        trigger=IntervalTrigger(seconds=10),
         id='habit_check',
         name='Check reminders and missed deadlines',
         replace_existing=True
@@ -336,7 +336,7 @@ def start_scheduler():
     )
 
     scheduler.start()
-    logger.info("Scheduler started - checking every 60 seconds, cleanup at 11:59 PM")
+    logger.info("Scheduler started - checking every 10 seconds, cleanup at 11:59 PM")
 
 
 def stop_scheduler():

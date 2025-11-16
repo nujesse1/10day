@@ -33,6 +33,7 @@ class ProofVerification(BaseModel):
 
 class ImageAnalysis(BaseModel):
     """Structured output for analyzing what habit an image represents"""
+    matched_habit_title: str  # The exact title of the matched habit from the provided list
     habit_identified: str  # Natural language description of what habit this proves
     activity_type: str  # e.g., "exercise", "meditation", "reading", "nutrition"
     key_details: str  # Specific details visible in the image
@@ -107,17 +108,21 @@ def image_to_base64(image_bytes: bytes) -> str:
 
 def analyze_image_for_habit(
     image_source: str,
+    user_message: str,
+    available_habits: list,
     is_twilio_url: bool = False
 ) -> ImageAnalysis:
     """
-    Analyze an image to identify what habit it represents
+    Analyze an image AND user message to identify which habit is being completed
 
     Args:
         image_source: Either a Twilio media URL or local file path
+        user_message: The text message the user sent with the image
+        available_habits: List of habit dicts with 'title' field to match against
         is_twilio_url: True if image_source is a Twilio URL, False for local path
 
     Returns:
-        ImageAnalysis object with identified habit and details
+        ImageAnalysis object with matched habit and details
 
     Raises:
         Exception if analysis fails
@@ -137,19 +142,31 @@ def analyze_image_for_habit(
         base64_image = image_to_base64(image_bytes)
         logger.info(f"[IMAGE ANALYSIS] Converted to base64")
 
-        system_prompt = """You are an intelligent image analyzer for a habit tracking system. Your job is to look at an image and determine what habit completion it represents.
+        # Prepare list of available habits for the prompt
+        habit_titles = [h.get('title') for h in available_habits]
+        habits_list_str = "\n".join([f"- {title}" for title in habit_titles])
 
-Analyze the image carefully and identify:
-1. What activity or habit is being demonstrated
-2. The type of activity (exercise, meditation, reading, nutrition, etc.)
-3. Key details that prove this activity was done
+        system_prompt = """You are an intelligent image analyzer for a habit tracking system. Your job is to look at BOTH the user's message and the image to determine which habit from the available list is being completed.
+
+Consider:
+1. What the user said in their message (strong signal)
+2. What the image shows
+3. Which habit from the available list best matches
 
 Be specific but concise."""
 
-        user_prompt = """Analyze this image and tell me what habit completion it represents.
+        user_prompt = f"""The user sent this message: "{user_message}"
+
+Along with an image.
+
+Available habits to match against:
+{habits_list_str}
+
+Analyze BOTH the message and image to determine which habit is being completed.
 
 Return a JSON object with:
-- habit_identified: Natural language description of the habit (e.g., "morning workout", "reading session", "meditation")
+- matched_habit_title: The EXACT title from the available habits list above that best matches
+- habit_identified: Natural language description of what was done (e.g., "cleaned the space", "made the bed")
 - activity_type: Category (e.g., "exercise", "meditation", "reading", "nutrition", "productivity")
 - key_details: What specifically is shown in the image
 - confidence: "high"/"medium"/"low" - how confident you are this is legitimate proof"""
@@ -177,7 +194,8 @@ Return a JSON object with:
         analysis = response.choices[0].message.parsed
 
         logger.info(f"[IMAGE ANALYSIS] ✓ Analysis complete")
-        logger.info(f"[IMAGE ANALYSIS] Identified habit: {analysis.habit_identified}")
+        logger.info(f"[IMAGE ANALYSIS] Matched habit: {analysis.matched_habit_title}")
+        logger.info(f"[IMAGE ANALYSIS] Identified: {analysis.habit_identified}")
         logger.info(f"[IMAGE ANALYSIS] Activity type: {analysis.activity_type}")
         logger.info(f"[IMAGE ANALYSIS] Confidence: {analysis.confidence}")
 
@@ -192,16 +210,19 @@ def verify_proof(
     image_source: str,
     habit_title: str,
     is_twilio_url: bool = False,
-    additional_context: Optional[str] = None
+    additional_context: Optional[str] = None,
+    deadline_time: Optional[str] = None
 ) -> ProofVerification:
     """
-    Verify proof image using GPT-4 Vision
+    Verify proof image using GPT-4 Vision with optional deadline checking
 
     Args:
         image_source: Either a Twilio media URL or local file path
         habit_title: The habit being verified
         is_twilio_url: True if image_source is a Twilio URL, False for local path
         additional_context: Optional additional context about what constitutes valid proof
+        deadline_time: Optional deadline time in HH:MM:SS format (24-hour). If provided,
+                      checks if proof is submitted within 10 minutes of deadline
 
     Returns:
         ProofVerification object with verified status, confidence, and reasoning
@@ -210,6 +231,38 @@ def verify_proof(
         Exception if verification fails
     """
     try:
+        # Check deadline if provided (10-minute grace period)
+        if deadline_time:
+            import pytz
+            from datetime import datetime, timedelta
+
+            # Use Pacific timezone (consistent with rest of app)
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            now_pacific = datetime.now(pacific_tz)
+            current_time = now_pacific.time()
+
+            # Parse deadline time (format: "HH:MM:SS" in 24-hour)
+            deadline = datetime.strptime(deadline_time, "%H:%M:%S").time()
+
+            # Create datetime objects for comparison (using today's date)
+            current_dt = datetime.combine(now_pacific.date(), current_time)
+            deadline_dt = datetime.combine(now_pacific.date(), deadline)
+
+            # Add 10-minute grace period
+            deadline_with_grace = deadline_dt + timedelta(minutes=10)
+
+            # Check if submission is too late
+            if current_dt > deadline_with_grace:
+                logger.warning(f"[PROOF VERIFICATION] Submission too late - Current: {current_time.strftime('%H:%M:%S')}, Deadline: {deadline_time}, Grace: +10min")
+                return ProofVerification(
+                    verified=False,
+                    confidence="high",
+                    reasoning=f"Proof submitted too late. Deadline was {deadline_time}, current time is {current_time.strftime('%H:%M:%S')} (10-minute grace period expired)."
+                )
+
+            logger.info(f"[PROOF VERIFICATION] Timestamp check passed - Current: {current_time.strftime('%H:%M:%S')}, Deadline: {deadline_time} (+10min grace)")
+
+        # Continue with normal image verification
         # Download or load the image
         if is_twilio_url:
             logger.info(f"[PROOF VERIFICATION] Downloading proof from Twilio: {image_source[:50]}...")
@@ -225,13 +278,12 @@ def verify_proof(
         logger.info(f"[PROOF VERIFICATION] Converted to base64: {len(base64_image)} characters")
 
         # Prepare the verification prompt
-        system_prompt = """You are a strict proof verification assistant. Your job is to verify whether an image provides legitimate proof that a habit was completed.
+        system_prompt = """You are a proof verification assistant. Your job is to verify whether an image provides legitimate proof that a habit was completed.
 
 You must be rigorous but fair:
 - ACCEPT: Clear, legitimate proof that directly shows completion
 - REJECT: Screenshots of screenshots, fake/staged proof, irrelevant images, memes, or unclear evidence
-
-Consider context clues, timestamps, and authenticity markers. If you're uncertain, err on the side of caution."""
+"""
 
         user_prompt = f"""Verify if this image is legitimate proof for completing the habit: "{habit_title}"
 
