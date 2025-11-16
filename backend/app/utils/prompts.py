@@ -2,6 +2,116 @@
 System prompts for the Drill Sergeant CLI
 """
 
+# LLM Semantic Habit Matching
+LLM_HABIT_MATCHING_SYSTEM_PROMPT = "You are a semantic matching assistant. Return only valid JSON."
+
+def format_habit_matching_prompt(user_input: str, habit_list: str) -> str:
+    """
+    Format prompt for LLM-based habit matching.
+
+    Args:
+        user_input: The user's natural language description of a habit
+        habit_list: Formatted string of existing habits (id: title per line)
+
+    Returns:
+        Formatted prompt string for habit matching
+    """
+    return f"""Given the user input: "{user_input}"
+And these existing habits:
+{habit_list}
+
+Return ONLY a JSON object with the best matching habit ID, or null if no good match exists:
+{{"habit_id": <number or null>}}
+
+Match semantically - consider synonyms, abbreviations, and different phrasings."""
+
+# GPT-4 Vision Prompts for Proof Verification
+
+# Image Analysis (for habit identification)
+VISION_IMAGE_ANALYSIS_SYSTEM_PROMPT = """You are an intelligent image analyzer for a habit tracking system. Your job is to look at BOTH the user's message and the image to identify ALL habits from the available list that are completed or proven.
+
+IMPORTANT: A single image can prove MULTIPLE habits. Look carefully at all activities, metrics, and data shown in the image.
+
+Consider:
+1. What the user said in their message (strong signal)
+2. What the image shows (look for ALL activities, distances, durations, etc.)
+3. ALL habits from the available list that could be proven by this image
+
+Extract ALL numerical data visible in the image with precise units."""
+
+def format_image_analysis_prompt(user_message: str, habit_titles: list[str]) -> str:
+    """
+    Format prompt for analyzing an image to identify ALL habits being completed.
+
+    Args:
+        user_message: Message sent by user
+        habit_titles: List of available habit titles
+
+    Returns:
+        Formatted prompt string for image analysis
+    """
+    habits_list_str = "\n".join([f"- {title}" for title in habit_titles])
+
+    return f"""The user sent this message: "{user_message}"
+
+Along with an image.
+
+Available habits to match against:
+{habits_list_str}
+
+Analyze BOTH the message and image to determine ALL habits that are proven or completed by this evidence.
+
+Return a JSON object with:
+- matched_habit_titles: A LIST containing the EXACT titles from the available habits above that are proven by this image (can be multiple)
+- habit_identified: Natural language description of ALL activities shown
+- activity_type: Primary category (e.g., "exercise", "meditation", "reading", "nutrition", "productivity")
+- key_details: ALL specific numerical data visible (distances with units, durations, dates, etc.)
+- confidence: "high"/"medium"/"low"
+- multiple_habits_detected: true if image proves 2 or more habits, false if only one
+
+Look carefully at ALL data shown. If multiple activities or metrics are visible, include ALL matching habits in matched_habit_titles."""
+
+# Proof Verification
+VISION_PROOF_VERIFICATION_SYSTEM_PROMPT = """You are a proof verification assistant. Your job is to verify whether an image provides legitimate proof that a habit was completed.
+
+CRITICAL: You must show your work. Provide step-by-step reasoning that walks through your logical decision-making process:
+1. What do I see in the image? (specific details, numbers, context)
+2. What does the habit require?
+3. Do they match? (including any necessary comparisons or conversions)
+4. Final decision and why
+
+You must be rigorous but fair:
+- ACCEPT: Clear, legitimate proof that shows the user has completed or surpassed the habit requirement
+- REJECT: Image does not show completion, unclear evidence, or does not meet the requirement
+"""
+
+def format_proof_verification_prompt(habit_title: str, additional_context: str = None) -> str:
+    """
+    Format prompt for verifying proof of habit completion.
+
+    Args:
+        habit_title: The habit being verified
+        additional_context: Optional additional context
+
+    Returns:
+        Formatted prompt string for proof verification
+    """
+    context_line = f"\nAdditional context: {additional_context}" if additional_context else ""
+
+    return f"""Verify if this image is legitimate proof for completing the habit: "{habit_title}"
+{context_line}
+
+Show your step-by-step reasoning:
+1. What specific details do I see in the image?
+2. What does "{habit_title}" require to be completed?
+3. Does the image show completion of this requirement?
+4. Final decision: verified or not?
+
+Return a JSON object with:
+- verified: true/false
+- confidence: "high"/"medium"/"low"
+- reasoning: Detailed step-by-step explanation showing your logical process (4-6 sentences)"""
+
 def format_baseline_context(baseline_context: dict) -> str:
     """
     Format baseline context as a structured message for the LLM.

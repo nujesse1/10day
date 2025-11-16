@@ -4,14 +4,8 @@ Drill Sergeant CLI - Natural language habit tracker using OpenAI function callin
 """
 import os
 import re
-from dotenv import load_dotenv
-from chat_engine import process_user_input, create_new_conversation
-
-# Load environment variables
-load_dotenv()
-
-# Backend API base URL
-API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+from app.services.chat import process_user_input, create_new_conversation
+from app.core.config import settings
 
 # Image file extensions to look for
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.heic', '.webp', '.bmp')
@@ -61,7 +55,6 @@ def main():
     """Main CLI loop"""
     print("🎖️  Drill Sergeant CLI v0")
     print("Natural language habit tracker")
-    print(f"Connected to: {API_BASE}")
     print("Type 'quit' or 'exit' to leave\n")
 
     # Initialize conversation history with system prompt

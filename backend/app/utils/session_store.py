@@ -1,16 +1,14 @@
 """
 Session Store - Manages per-user conversation histories for WhatsApp
 """
-from datetime import datetime, timedelta
-from typing import Dict, List, Any
-from chat_engine import create_new_conversation
+from datetime import timedelta
+from typing import Dict, List, Any, Optional
+from app.services.chat import create_new_conversation
+from app.utils.timezone import get_pacific_now
 
 # In-memory session storage
 # Format: {phone_number: {"history": [...], "last_active": datetime}}
 sessions: Dict[str, Dict[str, Any]] = {}
-
-# Session timeout in minutes
-SESSION_TIMEOUT_MINUTES = 30
 
 
 def get_or_create_session(phone_number: str) -> List[Dict[str, Any]]:
@@ -31,11 +29,11 @@ def get_or_create_session(phone_number: str) -> List[Dict[str, Any]]:
         # Create new session with system prompt
         sessions[phone_number] = {
             "history": create_new_conversation(),
-            "last_active": datetime.now()
+            "last_active": get_pacific_now()
         }
 
     # Update last active time
-    sessions[phone_number]["last_active"] = datetime.now()
+    sessions[phone_number]["last_active"] = get_pacific_now()
 
     return sessions[phone_number]["history"]
 
@@ -50,7 +48,7 @@ def update_session(phone_number: str, history: List[Dict[str, Any]]) -> None:
     """
     sessions[phone_number] = {
         "history": history,
-        "last_active": datetime.now()
+        "last_active": get_pacific_now()
     }
 
 
@@ -61,7 +59,7 @@ def cleanup_expired_sessions() -> int:
     Returns:
         Number of sessions removed
     """
-    cutoff_time = datetime.now() - timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    cutoff_time = get_pacific_now() - timedelta(minutes=30)
 
     expired_numbers = [
         phone_number
@@ -101,7 +99,7 @@ def clear_session(phone_number: str) -> bool:
     return False
 
 
-def get_session_info(phone_number: str) -> Dict[str, Any]:
+def get_session_info(phone_number: str) -> Optional[Dict[str, Any]]:
     """
     Get information about a user's session
 
@@ -119,5 +117,5 @@ def get_session_info(phone_number: str) -> Dict[str, Any]:
         "phone_number": phone_number,
         "message_count": len(session["history"]),
         "last_active": session["last_active"].isoformat(),
-        "age_minutes": (datetime.now() - session["last_active"]).total_seconds() / 60
+        "age_minutes": (get_pacific_now() - session["last_active"]).total_seconds() / 60
     }
