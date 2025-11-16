@@ -73,7 +73,7 @@ def _process_response_output(
     has_function_calls = False
     final_text_content = None
 
-    # First pass: check if we have function calls
+    # First pass: check if we have function calls and extract final text
     for item in response.output:
         if item.type == "message":
             # Extract text content from message
@@ -93,8 +93,12 @@ def _process_response_output(
         function_call_count = sum(1 for item in response.output if item.type == "function_call")
         print(f"[Round {iteration}] Model requested {function_call_count} function call(s)")
 
-    # Execute function calls and append results to messages
+    # Process all output items - append ALL items to preserve reasoning
     for item in response.output:
+        # Always append the item (reasoning, function_call, message, etc.)
+        messages.append(item)
+
+        # If it's a function call, also execute it and append the result
         if item.type == "function_call":
             # Parse arguments
             function_args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
@@ -107,9 +111,6 @@ def _process_response_output(
 
             if verbose:
                 print(f"  ← Result: {function_response}")
-
-            # Append the function call item to messages
-            messages.append(item)
 
             # Append the function result to messages
             messages.append({

@@ -283,9 +283,6 @@ def check_missed_deadlines(send_notification_callback=None):
                 logger.error(f"[DEADLINE CHECK] Failed to log strike for habit_id={habit['id']}: {e}")
 
         if strikes_logged > 0:
-            logger.info(f"[DEADLINE CHECK] Logged {strikes_logged} strike(s) for missed deadlines")
-        else:
-            logger.info("[DEADLINE CHECK] No missed deadlines found")
-
+            logger.info(f"[DEADLINE CHECK] Logged {strikes_logged} strike(s) for missed deadlines")            
     except Exception as e:
         logger.error(f"[DEADLINE CHECK] Error in check_missed_deadlines: {e}", exc_info=True)

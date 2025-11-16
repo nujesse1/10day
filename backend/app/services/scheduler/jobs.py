@@ -63,7 +63,6 @@ def check_and_send_reminders():
         habits_to_remind = reminders_service.get_habits_needing_reminders()
 
         if not habits_to_remind:
-            logger.info("[SCHEDULER] No reminders needed at this time")
             return
 
         logger.info(f"[SCHEDULER] Found {len(habits_to_remind)} reminder(s) to send")

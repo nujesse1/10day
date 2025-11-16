@@ -206,7 +206,7 @@ def analyze_image_for_habit(
         analysis = _call_vision_api_for_analysis(base64_image, system_prompt, user_prompt)
 
         logger.info(f"[IMAGE ANALYSIS] ✓ Analysis complete")
-        logger.info(f"[IMAGE ANALYSIS] Matched habit: {analysis.matched_habit_title}")
+        logger.info(f"[IMAGE ANALYSIS] Matched habits: {analysis.matched_habit_titles}")
         logger.info(f"[IMAGE ANALYSIS] Identified: {analysis.habit_identified}")
         logger.info(f"[IMAGE ANALYSIS] Activity type: {analysis.activity_type}")
         logger.info(f"[IMAGE ANALYSIS] Confidence: {analysis.confidence}")

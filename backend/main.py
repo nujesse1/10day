@@ -8,6 +8,19 @@ from app.routes import habits, health, whatsapp, chat
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Silence noisy third-party loggers
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
+logging.getLogger('apscheduler.executors').setLevel(logging.WARNING)
+logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

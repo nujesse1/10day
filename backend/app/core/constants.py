@@ -3,8 +3,8 @@ Application Constants - Centralized configuration values
 """
 
 # LLM Configuration
-LLM_MODEL_DEFAULT = "gpt-5"
-LLM_MODEL_VISION = "gpt-5"
+LLM_MODEL_DEFAULT = "gpt-4o-mini"
+LLM_MODEL_VISION = "gpt-4o"
 
 # Time & Scheduling
 SCHEDULER_CHECK_INTERVAL_SECONDS = 10
