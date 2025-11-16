@@ -3,7 +3,11 @@ WhatsApp Service - Twilio messaging logic
 """
 import logging
 import sys
+import time
+from typing import Optional
 from twilio.rest import Client
+from twilio.http.http_client import TwilioHttpClient
+from requests.exceptions import ConnectionError, Timeout
 from app.core.config import settings
 
 # Configure logging
@@ -27,19 +31,20 @@ else:
     logger.warning("Twilio credentials not found. WhatsApp integration will not work.")
 
 
-def send_whatsapp_message(to_number: str, message: str) -> str:
+def send_whatsapp_message(to_number: str, message: str, max_retries: int = 3) -> str:
     """
-    Send a WhatsApp message via Twilio
+    Send a WhatsApp message via Twilio with retry logic
 
     Args:
         to_number: Recipient WhatsApp number (e.g., "whatsapp:+13128856151")
         message: Message text to send
+        max_retries: Maximum number of retry attempts (default: 3)
 
     Returns:
         Message SID from Twilio
 
     Raises:
-        Exception if Twilio client not configured or send fails
+        Exception if Twilio client not configured or send fails after retries
     """
     if not twilio_client:
         raise Exception("Twilio client not configured")
@@ -47,19 +52,42 @@ def send_whatsapp_message(to_number: str, message: str) -> str:
     logger.info(f"[TWILIO] Sending message to {to_number}")
     sys.stdout.flush()
 
-    try:
-        twilio_message = twilio_client.messages.create(
-            from_=settings.TWILIO_WHATSAPP_NUMBER or "whatsapp:+14155238886",
-            body=message,
-            to=to_number
-        )
-        logger.info(f"[TWILIO] Message sent with SID: {twilio_message.sid}")
-        sys.stdout.flush()
-        return twilio_message.sid
-    except Exception as e:
-        logger.error(f"[TWILIO] Send failed: {str(e)}")
-        sys.stdout.flush()
-        raise
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            twilio_message = twilio_client.messages.create(
+                from_=settings.TWILIO_WHATSAPP_NUMBER or "whatsapp:+14155238886",
+                body=message,
+                to=to_number
+            )
+            logger.info(f"[TWILIO] Message sent with SID: {twilio_message.sid}")
+            sys.stdout.flush()
+            return twilio_message.sid
+        except (ConnectionError, Timeout) as e:
+            last_exception = e
+            attempt_num = attempt + 1
+            logger.warning(
+                f"[TWILIO] Connection error on attempt {attempt_num}/{max_retries}: {str(e)}"
+            )
+            sys.stdout.flush()
+
+            # Don't sleep on the last attempt
+            if attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s
+                wait_time = 2 ** attempt
+                logger.info(f"[TWILIO] Retrying in {wait_time} seconds...")
+                sys.stdout.flush()
+                time.sleep(wait_time)
+        except Exception as e:
+            # Non-retryable errors (auth, validation, etc.)
+            logger.error(f"[TWILIO] Non-retryable error: {str(e)}")
+            sys.stdout.flush()
+            raise
+
+    # All retries exhausted
+    logger.error(f"[TWILIO] Send failed after {max_retries} attempts: {str(last_exception)}")
+    sys.stdout.flush()
+    raise last_exception
 
 
 def is_twilio_configured() -> bool:

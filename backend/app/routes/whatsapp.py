@@ -47,12 +47,30 @@ async def whatsapp_webhook(request: Request):
     except ValueError as e:
         # Validation errors (missing fields, etc.)
         logger.error(f"[ERROR] Validation error: {str(e)}")
+
+        # Try to notify user about validation error
+        if from_number:
+            await send_error_message(from_number)
+            # Return 200 so Twilio doesn't retry
+            return {"status": "error", "message": "Validation error, user notified"}
+
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"[ERROR] Unexpected error processing WhatsApp webhook: {str(e)}", exc_info=True)
 
         # Try to send error message to user
+        error_message_sent = False
         if from_number:
-            await send_error_message(from_number)
+            try:
+                await send_error_message(from_number)
+                error_message_sent = True
+                logger.info("[ERROR HANDLING] Successfully notified user of error")
+            except Exception as notify_error:
+                logger.error(f"[ERROR HANDLING] Failed to notify user: {str(notify_error)}")
 
-        raise HTTPException(status_code=500, detail=str(e))
+        # If we successfully notified the user, return 200 to prevent Twilio retries
+        # Otherwise return 500 so Twilio can retry
+        if error_message_sent:
+            return {"status": "error", "message": "Processing failed, user notified"}
+        else:
+            raise HTTPException(status_code=500, detail=str(e))
